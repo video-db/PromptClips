@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 CLAUDE_KEY = os.getenv("ANTHROPIC_KEY")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_KEY = "" # API KEY FOR GEMINI
 
 
 class LLMType:
@@ -40,7 +40,7 @@ class LLM:
         self.model = model
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.claude_key = os.getenv("ANTHROPIC_KEY")
-        self.gemini_key = os.getenv("GEMINI_KEY")
+        self.gemini_key = "" # API KEY FOR GEMINI
 
     def chat(self, message, functions=None):
         if self.type == LLMType.OPENAI:
@@ -66,7 +66,6 @@ class LLM:
 
     def _call_openai(self, message, functions=None):
         url = "https://api.openai.com/v1/chat/completions"
-        # print(f'call openAI with message {message}')
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.openai_key}",
@@ -104,7 +103,7 @@ class LLM:
             return {"response": completion.completion}
         except (
             Exception
-        ) as e:  # Consider a more specific exception based on the Anthropic SDK
+        ) as e:
             return {"error": str(e)}
 
     def _call_gemini(self, message):
