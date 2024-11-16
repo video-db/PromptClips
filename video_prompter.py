@@ -2,7 +2,6 @@ import json
 
 import concurrent.futures
 
-from llm_agent import LLM, LLMType
 from videodb import connect
 from videodb import SearchType, IndexType
 from videodb.timeline import VideoAsset
@@ -42,7 +41,7 @@ def chunk_docs(docs, chunk_size):
     :return:
     """
     for i in range(0, len(docs), chunk_size):
-        yield docs[i : i + chunk_size]  # Yield the current chunk
+        yield docs[i : i + chunk_size]
 
 
 def get_result_timestamps(
@@ -61,7 +60,6 @@ def get_result_timestamps(
     result_timestamps = []
 
     def search_description(description):
-        # keyword search on each result description
         if index_type == "scene":
             search_res = video.search(
                 description,
@@ -77,8 +75,7 @@ def get_result_timestamps(
             )
         matched_segments = search_res.get_shots()
         if len(matched_segments) == 0:
-            return None  # No match found
-
+            return None
         video_shot = matched_segments[0]
         return (video_shot.start, video_shot.end, video_shot.text)
 
@@ -97,40 +94,54 @@ def get_result_timestamps(
             if res:
                 result_timestamps.append(res)
 
-    # Sorting the results if needed
     if sort == "time":
         result_timestamps.sort(key=lambda x: x[0])
+
+    #Print the found segments
+    print(f"\nFOUND SEGMENTS ({len(result_timestamps)}):")
+    for start, end, description in result_timestamps:
+        print(f"{start:.3f}-{end:.3f}: {description}")
 
     return result_timestamps
 
 
-# Creating and returning timeline of given result timestamps
 def build_video_timeline(
     video, result_timestamps, timeline, top_n=None, max_duration=None, debug=False
 ):
-    """
-    This function takes the matched segments list (result_timestamps) and creates a VideoDB Timeline based on the given conditions.
-    The user can specify top_n to select the top n results.
-    Additionally, the user can set max_duration to stop adding results to the Timeline if the total duration exceeds this limit.
-    """
     duration = 0
+    added_clips = 0
+    added_segments = []
+
     if top_n:
         existing_count = len(result_timestamps)
         result_timestamps = result_timestamps[:top_n]
         if debug:
             print(f"Picked top {top_n} from {existing_count}")
+
     for result_timestamp in result_timestamps:
         start = float(result_timestamp[0])
         end = float(result_timestamp[1])
         description = result_timestamp[2]
+
         if debug:
-            print(start, end, description)
-        duration += end - start
-        if max_duration and duration > max_duration:
-            duration -= end - start
+            print(f"Adding clip {added_clips + 1}: {start} - {end}, Description: {description}")
+
+        if max_duration and duration + (end - start) > max_duration:
+            print("Max duration reached. Stopping further additions.")
             break
+
         timeline.add_inline(VideoAsset(asset_id=video.id, start=start, end=end))
+        duration += end - start
+        added_clips += 1
+        added_segments.append((start, end, description))  #Collects added segments
+
+    #Prints the added segments
+    print(f"\nSEGMENTS ADDED ({len(added_segments)}):")
+    for start, end, description in added_segments:
+        print(f"{start:.3f}-{end:.3f}: {description}")
+
     return timeline, duration
+
 
 
 def filter_transcript(transcript, start, end):
@@ -142,7 +153,6 @@ def filter_transcript(transcript, start, end):
 
 
 def get_multimodal_docs(transcript, scenes, club_on="scene"):
-    # TODO: Implement club on transcript
     docs = []
     if club_on == "scene":
         for scene in scenes:
@@ -171,32 +181,26 @@ def send_msg_openai(chunk_prompt, llm=LLM()):
 
 def send_msg_claude(chunk_prompt, llm):
     response = llm.chat(message=chunk_prompt)
-    # TODO : add claude reposnse parser
     return response
 
 
 def send_msg_gemini(chunk_prompt, llm):
     response = llm.chat(message=chunk_prompt)
-    # TODO : add claude reposnse parser
     return response
 
 
 def text_prompter(transcript_text, prompt, llm=None):
     chunk_size = 10000
-    # sentence tokenizer
     chunks = chunk_docs(transcript_text, chunk_size=chunk_size)
-    # print(f"Length of the sentence chunk are {len(chunks)}")
 
     if llm is None:
         llm = LLM()
 
-    # 400 sentence at a time
     if llm.type == LLMType.OPENAI:
         llm_caller_fn = send_msg_openai
     elif llm.type == LLMType.GEMINI:
         llm_caller_fn = send_msg_gemini
     else:
-        # claude for now
         llm_caller_fn = send_msg_claude
 
     matches = []
@@ -204,8 +208,8 @@ def text_prompter(transcript_text, prompt, llm=None):
     i = 0
     for chunk in chunks:
         chunk_prompt = """
-        You are a video editor who uses AI. Given a user prompt and transcript of a video analyze the text to identify sentences in the transcript relevant to the user prompt for making clips. 
-        - **Instructions**: 
+        You are a video editor who uses AI. Given a user prompt and transcript of a video analyze the text to identify sentences in the transcript relevant to the user prompt for making clips.
+        - **Instructions**:
           - Evaluate the sentences for relevance to the specified user prompt.
           - Make sure that sentences start and end properly and meaningfully complete the discussion or topic. Choose the one with the greatest relevance and longest.
           - We'll use the sentences to make video clips in future, so optimize for great viewing experience for people watching the clip of these.
@@ -213,7 +217,7 @@ def text_prompter(transcript_text, prompt, llm=None):
           - Strictly make each result minimum 20 words long. If the match is smaller, adjust the boundries and add more context around the sentences.
 
         - **Output Format**: Return a JSON list of strings named 'sentences' that containes the output sentences, make sure they are exact substrings.
-        - **User Prompts**: User prompts may include requests like 'find funny moments' or 'find moments for social media'. Interpret these prompts by 
+        - **User Prompts**: User prompts may include requests like 'find funny moments' or 'find moments for social media'. Interpret these prompts by
         identifying keywords or themes in the transcript that match the intent of the prompt.
         """
 
@@ -251,17 +255,17 @@ def text_prompter(transcript_text, prompt, llm=None):
 
 
 def scene_prompter(transcript_text, prompt, llm=None, run_concurrent=True):
-    chunk_size = 100
+    chunk_size = 200
     chunks = chunk_docs(transcript_text, chunk_size=chunk_size)
 
-    llm_caller_fn = send_msg_openai
+    llm_caller_fn = send_msg_gemini
     if llm is None:
         llm = LLM()
 
     # TODO:  llm should have caller function
     # 400 sentence at a time
-    if llm.type == LLMType.OPENAI:
-        llm_caller_fn = send_msg_openai
+    if llm.type == LLMType.GEMINI:
+        llm_caller_fn = send_msg_gemini
     else:
         # claude for now
         llm_caller_fn = send_msg_claude
@@ -275,7 +279,7 @@ def scene_prompter(transcript_text, prompt, llm=None, run_concurrent=True):
         chunk_prompt = """
         You are a video editor who uses AI. Given a user prompt and AI-generated scene descriptions of a video, analyze the descriptions to identify segments relevant to the user prompt for creating clips.
 
-        - **Instructions**: 
+        - **Instructions**:
             - Evaluate the scene descriptions for relevance to the specified user prompt.
             - Choose description with the highest relevance and most comprehensive content.
             - Optimize for engaging viewing experiences, considering visual appeal and narrative coherence.
@@ -311,7 +315,7 @@ def scene_prompter(transcript_text, prompt, llm=None, run_concurrent=True):
     else:
         for prompt in prompts:
             try:
-                res = llm_caller_fn(prompt)
+                res = llm_caller_fn(prompt, llm)
                 matches.extend(res)
             except Exception as e:
                 print(f"Chunk failed to work with LLM {str(e)}")
@@ -326,8 +330,8 @@ def multimodal_prompter(transcript, scene_index, prompt, llm=None, run_concurren
     if llm is None:
         llm = LLM()
 
-    if llm.type == LLMType.OPENAI:
-        llm_caller_fn = send_msg_openai
+    if llm.type == LLMType.GEMINI:
+        llm_caller_fn = send_msg_gemini
     else:
         llm_caller_fn = send_msg_claude
 
@@ -344,7 +348,7 @@ def multimodal_prompter(transcript, scene_index, prompt, llm=None, run_concurren
         video: {chunk}
         User Prompt: {prompt}
 
-    
+
         """
         chunk_prompt += """
          **Output Format**: Return a JSON list of strings named 'result' that containes the  fileds `sentence`.
